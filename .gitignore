@@ -1,0 +1,11 @@
+# Ignore all FASTA files in any directory
+/mnt/clusters/grayling/data/c22111854/ResearchProject/Data/SabDab_all_structures/all_structures/fasta/bound/*.fasta
+/mnt/clusters/grayling/data/c22111854/ResearchProject/Data/SabDab_all_structures/all_structures/fasta/unbound/*.fasta
+
+
+# Ignore a specific directory
+SabDab_DeepAb_Prediction3/
+
+# Ignore all files in the STCR_all_structures directory
+STCR_all_structures/
+
