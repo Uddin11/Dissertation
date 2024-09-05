@@ -1,0 +1,273 @@
+---
+title: "TCR vs Ab"
+author: "Tom Whalley"
+date: "13 January 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(alakazam)
+library(readr)
+library(RColorBrewer)
+library(tidyr)
+
+```
+
+```{r}
+library(dplyr)
+library(readr)
+
+# Define the function to read CSV files with consistent column types
+read_glob <- function(directory) {
+  files <- list.files(directory, full.names = TRUE, pattern = "\\.csv$")
+  
+  data <- lapply(files, function(file) {
+    df <- read_csv(file, col_types = cols(.default = col_character()))
+    if ("...1" %in% colnames(df)) {
+      df <- df %>% select(-...1)
+    }
+    return(df)
+  })
+  
+  # Debugging: Print structure of each dataframe
+  lapply(data, function(df) {
+    cat("Structure of individual file:\n")
+    str(df)
+    return(NULL)
+  })
+  
+  # Ensure consistent column names across all files
+  common_cols <- Reduce(intersect, lapply(data, colnames))
+  data <- lapply(data, function(df) df[, common_cols, drop = FALSE])
+  
+  # Debugging: Print structure after ensuring common columns
+  lapply(data, function(df) {
+    cat("Structure after selecting common columns:\n")
+    str(df)
+    return(NULL)
+  })
+  
+  # Combine data frames
+  combined_data <- bind_rows(data)
+  
+  # Convert columns to their intended types if necessary
+  combined_data <- combined_data %>%
+    mutate(
+      donor_residue = as.integer(donor_residue),
+      to_residue = as.integer(to_residue),
+      distance = as.numeric(distance)
+    )
+  
+  # Debugging: Print structure of the combined data frame
+  cat("Structure of combined data frame:\n")
+  str(combined_data)
+  
+  return(combined_data)
+}
+
+# Read the TCR and antibody data
+tcr <- read_glob("/mnt/clusters/grayling/data/c22111854/ResearchProject/Data/tcrs")
+ab <- read_glob("/mnt/clusters/grayling/data/c22111854/ResearchProject/Data/antibody")
+
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Convert donor_residue to character in both datasets
+tcr <- tcr %>% mutate(donor_residue = as.character(donor_residue), origin = "TCR")
+ab <- ab %>% mutate(donor_residue = as.character(donor_residue), origin = "Antibody")
+
+# Combining the datasets
+combined <- bind_rows(tcr, ab)
+
+# Debugging: Print structure of the combined data frame
+cat("Structure of combined data frame:\n")
+str(combined)
+
+# Count unique occurrences of TCR and antibody
+combined %>%
+  group_by(origin) %>%
+  summarise(count = n_distinct(Pdb)) %>%
+  ggplot(aes(x = "", y = count, fill = origin)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y", start = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank()) +
+  scale_fill_brewer(palette = "Set1")
+
+```
+
+```{r}
+# Standardize the donor_chain names
+combined %>%
+  mutate(donor_chain = replace(donor_chain, donor_chain == "tcra", "light")) %>%
+  mutate(donor_chain = replace(donor_chain, donor_chain == "tcrb", "heavy")) -> combined
+
+# Outright number of non-unique contacts
+combined %>%
+  group_by(donor_chain, origin) %>%
+  tally() -> non_unique
+
+combined %>%
+  group_by(donor_chain, origin, donor_residue, Pdb) %>%
+  count(donor_residue) %>%
+  group_by(donor_chain, origin) %>%
+  tally() -> unique
+
+unique$status <- "unique"
+non_unique$status <- "non-unique"
+
+ncont <- bind_rows(unique, non_unique)
+
+ggplot(ncont, aes(x = "", y = n, fill = donor_chain)) +
+  geom_bar(width = 1, stat = "identity", position = position_fill()) +
+  coord_polar("y", start = 0) +
+  blank_theme +
+  theme(axis.text.x = element_blank()) +
+  scale_fill_brewer(palette = "Set1") +
+  facet_grid(origin ~ status) +
+  theme(strip.text.y = element_text(angle = 360)) +
+  labs(fill = "Donor chain") +
+  ggtitle("Number of contacts made by immunoreceptor chain")
+
+```
+
+```{r}
+combined %>%
+  group_by(donor_chain, origin, donor_residue, donor_loop) %>%
+  count(donor_residue) %>%
+  ggplot(aes(x = donor_residue, y = n, fill = origin)) +
+  geom_bar(stat = "identity") +
+  facet_grid(donor_chain ~ donor_loop, scales = "free") +
+  theme_classic() +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, margin = margin(t = 10)))  # Rotate and add margin
+
+
+```
+
+```{r}
+combined %>%
+  distinct(donor_chain, origin, donor_residue, donor_loop, Pdb) %>%
+  group_by(donor_chain, origin, donor_loop, Pdb) %>%
+  tally() %>%
+  ggplot(aes(x = n, fill = donor_loop)) +
+  geom_density(alpha = 0.6) +
+  facet_wrap(origin ~ donor_chain) +
+  theme_classic()
+
+combined %>%
+  distinct(donor_chain, origin, donor_residue, donor_loop, Pdb) %>%
+  group_by(donor_chain, origin, donor_loop, Pdb) %>%
+  tally() %>%
+  filter(donor_loop == "CDR3") %>%
+  ggplot(aes(x = n, fill = donor_loop)) +
+  geom_histogram() +
+  facet_wrap(origin ~ donor_chain, scales = "free_y") +
+  theme_classic()
+
+```
+
+```{r}
+combined %>%
+  distinct(donor_chain, origin, donor_residue, donor_loop, Pdb) %>%
+  group_by(donor_chain, origin, donor_loop, Pdb) %>%
+  tally() %>%
+  spread(donor_chain, n) %>%
+  replace_na(list(heavy = 0, light = 0)) %>%
+  ggplot(aes(x = heavy, y = light, colour = donor_loop)) +
+  geom_point() +
+  theme_classic() +
+  facet_grid(origin ~ donor_loop) +
+  theme(legend.position = "none")
+
+combined %>%
+  distinct(donor_chain, origin, donor_residue, donor_loop, Pdb) %>%
+  group_by(donor_chain, origin, donor_loop, Pdb) %>%
+  tally() %>%
+  spread(donor_chain, n) %>%
+  replace_na(list(heavy = 0, light = 0)) %>%
+  ggplot(aes(x = heavy, y = light)) +
+  geom_hex(bins = 30) +
+  scale_fill_continuous(type = "viridis") +
+  theme_classic() +
+  facet_grid(origin ~ donor_loop) +
+  theme(legend.position = "none")
+
+combined %>%
+  distinct(donor_chain, origin, donor_residue, donor_loop, Pdb) %>%
+  group_by(donor_chain, origin, donor_loop, Pdb) %>%
+  tally() %>%
+  spread(donor_chain, n) %>%
+  replace_na(list(heavy = 0, light = 0)) %>%
+  ggplot(aes(x = heavy, y = light)) +
+  geom_hex() +
+  scale_fill_continuous(type = "viridis") +
+  theme_classic()
+
+```
+
+
+
+```{r summary dataset}
+sc <- read_csv("/mnt/clusters/grayling/data/c22111854/ResearchProject/Data/SabDab_all_structures/all_structures/sc_scores.csv")
+sc <- sc[sc$sc != "None", ]
+sc$sc <- as.numeric(sc$sc)
+sc <- na.omit(sc)
+
+# Add origin column to SC scores
+sc$origin <- "Ab"
+
+ggplot(sc, aes(x = sc, fill = origin)) +
+  geom_density(alpha = 0.8) +
+  theme_classic() +
+  scale_fill_brewer(palette = "Set1") +
+  xlim(c(0, 1))
+
+```
+
+```{r}
+# Combine the SC scores for TCRs and Antibodies into one dataframe
+sc_combined <- bind_rows(sc_tcr, sc_ab)
+
+# Assuming 'combined_counts' is the dataset containing contact count information
+merged_counts <- combined_counts %>%
+  left_join(sc_combined, by = "origin")
+
+
+# Plot the relationship between contact count and SC scores
+ggplot(merged_counts, aes(x = n, y = sc, color = origin)) + 
+  geom_point(alpha = 0.3, size = 0.5, position = position_jitter(width = 500, height = 0.05)) +
+  theme_classic() +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Contact Count vs SC Score",
+       x = "Contact Count",
+       y = "SC Score",
+       color = "Origin") +
+  facet_wrap(~origin) +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+s
+
+
+ggplot(merged_counts, aes(x = n, y = sc)) + 
+  geom_hex(bins = 50) +
+  theme_classic() +
+  scale_fill_viridis_c() +
+  labs(title = "Contact Count vs SC Score (Hexbin)",
+       x = "Contact Count",
+       y = "SC Score") +
+  facet_wrap(~origin) +
+  theme(plot.title = element_text(size = 14, face = "bold"))
+
+
+```
+
+```{r}
+
+```
+
